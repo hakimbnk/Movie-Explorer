@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Background animé réactif à la souris</title>
+  <style>
+    /* Fullscreen layout */
+    html,body{height:100%;margin:0}
+    body{overflow:hidden;background:linear-gradient(120deg,#0f172a,#0b1220);font-family:sans-serif}
+
+    /* Canvas covers the viewport */
+    canvas{display:block;position:fixed;inset:0;z-index:0}
+
+    /* Content above the background to show how it behaves */
+    .content{position:relative;z-index:2;color:#fff;display:flex;align-items:center;justify-content:center;height:100%}
+    h1{font-weight:700;letter-spacing:0.02em}
+
+    /* Small HUD to tweak values (optional) */
+    .hud{position:fixed;right:12px;top:12px;background:rgba(255,255,255,0.06);padding:8px;border-radius:8px;color:#cfd8ff;font-size:13px;backdrop-filter:blur(6px)}
+    .hud label{display:block;margin:4px 0}
+    input[type=range]{width:110px}
+  </style>
+</head>
+<body>
+  <canvas id="bg"></canvas>
+
+  
+
+  <div class="hud">
+    <div>Particules: <span id="count">120</span></div>
+    <label>Vitesse <input id="speed" type="range" min="0" max="2" step="0.05" value="1"></label>
+  </div>
+
+  <script>
+    // Configuration
+    const CONFIG = {
+      particleCount: 120,        // nombre de particules
+      maxSize: 3.2,              // taille max des particules
+      lineDistance: 120,         // distance max pour relier 2 particules
+      mouseRadius: 150,          // zone d'influence de la souris
+      hueStart: 200,             // teinte de départ (HSL)
+      hueEnd: 260               // teinte de fin
+    };
+
+    const canvas = document.getElementById('bg');
+    const ctx = canvas.getContext('2d');
+    let W = canvas.width = innerWidth;
+    let H = canvas.height = innerHeight;
+
+    // Adapt to devicePixelRatio for crisp rendering
+    const DPR = Math.max(1, window.devicePixelRatio || 1);
+    canvas.width = W * DPR; canvas.height = H * DPR; canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+    ctx.scale(DPR, DPR);
+
+    // Mouse tracking
+    const mouse = { x: W/2, y: H/2, down: false };
+    addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY });
+    addEventListener('touchmove', e => { const t=e.touches[0]; if(t){ mouse.x=t.clientX; mouse.y=t.clientY } }, {passive:true});
+
+    // Particule class
+    class Particle{
+      constructor(){
+        this.reset(true);
+      }
+      reset(init=false){
+        this.x = Math.random()*W;
+        this.y = Math.random()*H;
+        const angle = Math.random()*Math.PI*2;
+        const speed = (Math.random()*0.6 + 0.2);
+        this.vx = Math.cos(angle)*speed;
+        this.vy = Math.sin(angle)*speed;
+        this.size = Math.random()*CONFIG.maxSize + 0.4;
+        this.h = CONFIG.hueStart + Math.random()*(CONFIG.hueEnd-CONFIG.hueStart);
+        if(!init && Math.random()<0.01){ // parfois respawn au bord
+          if(Math.random()<0.5) this.x = Math.random()>0.5? -10: W+10;
+          else this.y = Math.random()>0.5? -10: H+10;
+        }
+      }
+      update(speedMult){
+        // Attraction/repulsion to mouse
+        const dx = this.x - mouse.x;
+        const dy = this.y - mouse.y;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        if(dist < CONFIG.mouseRadius){
+          // poussée basée sur la distance (repulse)
+          const force = (CONFIG.mouseRadius - dist)/CONFIG.mouseRadius;
+          const angle = Math.atan2(dy, dx);
+          this.vx += Math.cos(angle) * (0.6*force);
+          this.vy += Math.sin(angle) * (0.6*force);
+        }
+
+        // léger dampening pour stabiliser
+        this.vx *= 0.98;
+        this.vy *= 0.98;
+
+        this.x += this.vx * speedMult;
+        this.y += this.vy * speedMult;
+
+        // Wrap edges
+        if(this.x < -20) this.x = W+20;
+        if(this.x > W+20) this.x = -20;
+        if(this.y < -20) this.y = H+20;
+        if(this.y > H+20) this.y = -20;
+      }
+      draw(ctx){
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.size, 0, Math.PI*2);
+        ctx.fillStyle = `hsl(${this.h} 70% 60% / 0.95)`;
+        ctx.fill();
+      }
+    }
+
+    // Create particles
+    let particles = [];
+    function makeParticles(){
+      particles = [];
+      for(let i=0;i<CONFIG.particleCount;i++) particles.push(new Particle());
+      document.getElementById('count').textContent = CONFIG.particleCount;
+    }
+    makeParticles();
+
+    // Animation loop
+    let last = performance.now();
+    let speedControl = document.getElementById('speed');
+    function frame(t){
+      const dt = Math.min(60, t - last)/16.6667; // approx frames relative to 60fps
+      last = t;
+      const speedMult = 1 + (parseFloat(speedControl.value)||1) * 0.9;
+
+      // clear with slight alpha for motion trails
+      ctx.clearRect(0,0,W,H);
+
+      // subtle gradient background overlay
+      const g = ctx.createLinearGradient(0,0,W,H);
+      g.addColorStop(0,'rgba(6,12,34,0.45)');
+      g.addColorStop(1,'rgba(12,24,46,0.45)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0,0,W,H);
+
+      // update and draw particles
+      for(let p of particles){
+        p.update(speedMult*dt);
+        p.draw(ctx);
+      }
+
+      // draw lines between near particles
+      for(let i=0;i<particles.length;i++){
+        for(let j=i+1;j<particles.length;j++){
+          const a = particles[i];
+          const b = particles[j];
+          const dx = a.x - b.x;
+          const dy = a.y - b.y;
+          const d2 = dx*dx + dy*dy;
+          if(d2 < CONFIG.lineDistance*CONFIG.lineDistance){
+            const alpha = 1 - (Math.sqrt(d2)/CONFIG.lineDistance);
+            ctx.beginPath();
+            ctx.moveTo(a.x,a.y);
+            ctx.lineTo(b.x,b.y);
+            // color blend based on average hue
+            const avgHue = (a.h + b.h)/2;
+            ctx.strokeStyle = `hsl(${avgHue} 68% 60% / ${alpha*0.35})`;
+            ctx.lineWidth = 0.9;
+            ctx.stroke();
+          }
+        }
+      }
+
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+
+    // Handle resize
+    addEventListener('resize', ()=>{
+      W = innerWidth; H = innerHeight;
+      canvas.width = W * DPR; canvas.height = H * DPR; canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+      ctx.scale(DPR, DPR);
+    });
+
+    // HUD interactions
+    speedControl.addEventListener('input', ()=>{});
+
+    // Optional: allow user to change particle count quickly via console or future UI
+    // Example: CONFIG.particleCount = 80; makeParticles();
+
+    // Accessibility: pause animation when user switches tabs to save CPU
+    document.addEventListener('visibilitychange', ()=>{
+      if(document.hidden){ /* could cancelAnimationFrame if we tracked id */ }
+    });
+  </script>
+</body>
+</html>
